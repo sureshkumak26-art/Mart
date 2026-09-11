@@ -1,7 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import mongoose from 'mongoose';
-import { Client, GatewayIntentBits, Partials, PermissionsBitField, ChannelType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, REST, Routes, SlashCommandBuilder } from 'discord.js';
+import QRCode from 'qrcode';
+import { Client, GatewayIntentBits, Partials, PermissionsBitField, ChannelType, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, Events, REST, Routes, SlashCommandBuilder, AttachmentBuilder } from 'discord.js';
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildModeration],
@@ -16,7 +17,7 @@ const commands = [
   new SlashCommandBuilder().setName('warn').setDescription('Warn a member').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addStringOption(o=>o.setName('reason').setDescription('Reason').setRequired(true)),
   new SlashCommandBuilder().setName('timeout').setDescription('Timeout a member').addUserOption(o=>o.setName('user').setDescription('Member').setRequired(true)).addIntegerOption(o=>o.setName('minutes').setDescription('Minutes').setRequired(true).setMinValue(1).setMaxValue(40320)),
   new SlashCommandBuilder().setName('ai').setDescription('AI assistant placeholder').addStringOption(o=>o.setName('prompt').setDescription('Your question').setRequired(true)),
-  new SlashCommandBuilder().setName('pay').setDescription('Show payment options'),
+  new SlashCommandBuilder().setName('pay').setDescription('Generate a UPI payment QR').addNumberOption(o=>o.setName('amount').setDescription('Amount in INR').setRequired(true).setMinValue(1)),
   new SlashCommandBuilder().setName('play').setDescription('Music command placeholder').addStringOption(o=>o.setName('query').setDescription('Song/search query').setRequired(true))
 ].map(c=>c.toJSON());
 
@@ -64,11 +65,35 @@ client.on(Events.InteractionCreate, async interaction => {
       return interaction.reply(`⏱️ ${member} timed out for ${minutes} minutes.`);
     }
     if (interaction.commandName === 'ai') return interaction.reply({content:`🤖 AI module ready. Connect your AI provider using AI_API_KEY to enable responses.\nPrompt: ${interaction.options.getString('prompt')}`,ephemeral:true});
-    if (interaction.commandName === 'pay') return interaction.reply({content:`💳 Payment Center\nUPI: ${process.env.UPI_ID || 'Not configured'}\nCrypto: Plisio integration is ready for configuration.`,ephemeral:true});
+    if (interaction.commandName === 'pay') return createUPIPayment(interaction);
     if (interaction.commandName === 'play') return interaction.reply({content:`🎵 Music module received: **${interaction.options.getString('query')}**. Voice playback adapter is ready for the next module.`,ephemeral:true});
   }
   if (interaction.isButton() && interaction.customId === 'ticket_create') return createTicket(interaction);
 });
+
+async function createUPIPayment(interaction) {
+  const upiId = process.env.UPI_ID?.trim();
+  const amount = interaction.options.getNumber('amount');
+  if (!upiId) return interaction.reply({content:'❌ UPI is not configured. Set UPI_ID in .env first.',ephemeral:true});
+  const orderId = `MART-${Date.now()}-${interaction.user.id.slice(-5)}`;
+  const note = `Payment ${orderId}`;
+  const params = new URLSearchParams({ pa: upiId, pn: process.env.UPI_NAME || 'Mart', am: amount.toFixed(2), cu: 'INR', tn: note });
+  const upiUri = `upi://pay?${params.toString()}`;
+  try {
+    const qr = await QRCode.toBuffer(upiUri, { width: 600, margin: 2, errorCorrectionLevel: 'M' });
+    const attachment = new AttachmentBuilder(qr, {name:`${orderId}.png`});
+    const embed = new EmbedBuilder()
+      .setTitle('💳 UPI Payment')
+      .setDescription(`Scan the QR code to pay **₹${amount.toFixed(2)}**.\n\n**UPI ID:** ${upiId}\n**Order ID:** \`${orderId}\`\n**Note:** ${note}\n\nAfter paying, keep your UPI transaction/reference ID for verification.`)
+      .setImage(`attachment://${orderId}.png`)
+      .setFooter({text:'Verify the recipient and amount in your UPI app before paying.'})
+      .setColor(0x5865f2);
+    return interaction.reply({embeds:[embed],files:[attachment],ephemeral:true});
+  } catch (error) {
+    console.error('UPI QR error:', error);
+    return interaction.reply({content:'❌ Failed to generate the UPI QR code.',ephemeral:true});
+  }
+}
 
 async function createTicket(interaction) {
   if (!interaction.guild) return;
@@ -97,7 +122,6 @@ client.on(Events.InteractionCreate, async interaction => {
 });
 
 client.on(Events.GuildMemberAdd, async member => {
-  // Basic anti-raid hook: rapid joins are logged. Configure stronger thresholds in the database layer.
   const guild = member.guild;
   const now = Date.now();
   guild.__recentJoins ??= [];
