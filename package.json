@@ -6,5 +6,5 @@
   "main": "src/index.js",
   "scripts": {"start":"node src/index.js","register":"node src/deploy-commands.js"},
   "engines": {"node": ">=20"},
-  "dependencies": {"@discordjs/voice":"latest","discord.js":"latest","dotenv":"latest","express":"latest","mongoose":"latest"}
+  "dependencies": {"@discordjs/voice":"latest","discord.js":"latest","dotenv":"latest","express":"latest","mongoose":"latest","qrcode":"latest"}
 }
